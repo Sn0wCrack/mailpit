@@ -17,7 +17,7 @@ import (
 	"github.com/mhale/smtpd"
 )
 
-func mailHandler(origin net.Addr, from string, to []string, data []byte) error {
+func mailHandler(origin net.Addr, from string, to []string, data []byte) (string, error) {
 	if !config.SMTPStrictRFCHeaders {
 		// replace all <CR><CR><LF> (\r\r\n) with <CR><LF> (\r\n)
 		// @see https://github.com/axllent/mailpit/issues/87 & https://github.com/axllent/mailpit/issues/153
@@ -28,7 +28,7 @@ func mailHandler(origin net.Addr, from string, to []string, data []byte) error {
 	if err != nil {
 		logger.Log().Errorf("[smtpd] error parsing message: %s", err.Error())
 
-		return err
+		return "", err
 	}
 
 	// check / set the Return-Path based on SMTP from
@@ -60,10 +60,12 @@ func mailHandler(origin net.Addr, from string, to []string, data []byte) error {
 		messageID = uuid.New().String() + "@mailpit"
 		// add unique ID
 		data = append([]byte("Message-Id: <"+messageID+">\r\n"), data...)
-	} else if config.IgnoreDuplicateIDs {
-		if storage.MessageIDExists(messageID) {
+	} else if !config.IgnoreDuplicateIDs {
+		id, _ := storage.GetMessageByMessageID(messageID)
+
+		if id != "" {
 			logger.Log().Debugf("[smtpd] duplicate message found, ignoring %s", messageID)
-			return nil
+			return id, nil
 		}
 	}
 
@@ -116,17 +118,17 @@ func mailHandler(origin net.Addr, from string, to []string, data []byte) error {
 		logger.Log().Debugf("[smtpd] added missing addresses to Bcc header: %s", strings.Join(missingAddresses, ", "))
 	}
 
-	_, err = storage.Store(data)
+	id, err := storage.Store(data)
 	if err != nil {
 		logger.Log().Errorf("[db] error storing message: %s", err.Error())
 
-		return err
+		return "", err
 	}
 
 	subject := msg.Header.Get("Subject")
 	logger.Log().Debugf("[smtpd] received (%s) from:%s subject:%q", cleanIP(origin), from, subject)
 
-	return nil
+	return id, nil
 }
 
 func authHandler(remoteAddr net.Addr, mechanism string, username []byte, password []byte, _ []byte) (bool, error) {
@@ -168,10 +170,10 @@ func Listen() error {
 	return listenAndServe(config.SMTPListen, mailHandler, authHandler)
 }
 
-func listenAndServe(addr string, handler smtpd.Handler, authHandler smtpd.AuthHandler) error {
+func listenAndServe(addr string, handler smtpd.MsgIDHandler, authHandler smtpd.AuthHandler) error {
 	srv := &smtpd.Server{
 		Addr:          addr,
-		Handler:       handler,
+		MsgIDHandler:  handler,
 		Appname:       "Mailpit",
 		Hostname:      "",
 		AuthHandler:   nil,

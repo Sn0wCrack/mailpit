@@ -770,14 +770,30 @@ func IsUnread(id string) bool {
 }
 
 // MessageIDExists checks whether a Message-ID exists in the DB
-func MessageIDExists(id string) bool {
+func MessageIDExists(messageID string) bool {
 	var total int
 
 	q := sqlf.From("mailbox").
 		Select("COUNT(*)").To(&total).
-		Where("MessageID = ?", id)
+		Where("MessageID = ?", messageID)
 
 	_ = q.QueryRowAndClose(nil, db)
 
 	return total != 0
+}
+
+func GetMessageByMessageID(messageID string) (string, error) {
+	var id string = ""
+
+	q := sqlf.From("mailbox").
+		Select("ID").To(&id).
+		Where("MessageID = ?", messageID)
+
+	err := q.QueryRowAndClose(nil, db)
+
+	if err != nil {
+		return "", err
+	}
+
+	return id, nil
 }
